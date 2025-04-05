@@ -1,0 +1,269 @@
+/// Student project
+/// Turku University of Applied Sciences, 2025
+/// niko.heiskanen@gmail.com
+ 
+/// Message length: 4-21 bytes
+/// Message Format: MID PID DATA PID DATA DATA CHECKSUM
+/// Messages can have multiple PID's
+ 
+/// MID 128 = ECU#1
+/// PID 0-127 Single character
+/// PID 128-191 Double character, Byte1 Byte0
+/// PID 192-530 Character amount is byte following PID;
+/// PID 254 and 255, Data link. rest of the message
+
+/// PID LIST:
+/// 1: 84 - Road Speed -  UInt 0.805 km/h
+/// 2: 91 - Percent Accelerator Pedal Position - UInt 0.4%
+/// 3: 92 - Percent Engine Load - Uint 0.5%
+/// 4: 100 - Engine Oil Pressure - UInt 3.45 kPa
+/// 5: 102 - Boost Pressure - UInt  0.862 kPa
+
+/// 6: 175 - Engine Oil Temperature - Sint 0.25 °F -> (°F - 32) * 5 / 9 °C;
+/// 7: 183 - Fuel Rate (Instantaneous) - UInt 16.428 x 10^-6 L/s -> L/s * 3600 = L/h
+/// 8: 184 - Instantaneous Fuel Economy - UInt 1.66072 x 10^-3 km/L
+/// 9: 190 - Engine Speed - UInt 0.25 rpm
+
+/// 10: 244 - Trip distance - ULInt 0.16 km
+
+/// Parameter Identification values ￼storage
+let storage = [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1];
+
+/// Data buffer
+let buffer = new Array(42).fill(0);
+
+/// Arrays of known formats
+let format_1 = [128,84,'_x',91,'_x',92,'_x',190,'_x','_x',85,'_x',121,'_x',183,'_x','_x',184,'_x','_x','_x'];
+let format_2 = [128,105,'_x',108,'_x',110,'_x',168,'_x','_x',175,'_x','_x','_x'];
+let format_3 = [128,71,'_x',83,'_x',89,'_x',100,'_x',102,'_x','_x'];
+let format_4 = [128,244,4,'_x','_x','_x','_x',245,4,'_x','_x','_x','_x','_x'];
+/// Hexadecimal to decimal converter
+function hex2dec(byte) {
+    return parseInt(byte, 16); 
+}
+ 
+/// Process buffer
+function buffering(data) {
+    buffer.push(...data);   
+    if (buffer.length > 42) {
+        buffer.splice(0, buffer.length - 42);
+    }
+}
+ 
+/// Get message from buffer
+function buffer2format(buffer, format) {
+    
+    for (let i = 0; i <= buffer.length - format.length; i++) {
+        let slice = buffer.slice(i, i + format.length);
+        let match = true;
+        
+        for (let j = 0; j < format.length; j++) {
+            if (format[j] !== '_x' && format[j] !== slice[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            for (let k = i; k < i + format.length; k++) {
+                buffer[k] = 0;
+            }
+            return slice;
+        }
+    }
+    return [0];
+}
+
+/// Checksum calculator
+function calculateCKS(bytes) {
+    let sum = 0;
+    for (let i = 0; i < bytes.length; i++) {
+        sum += bytes[i];
+    }
+    return (256 - (sum % 256)) % 256;  // Two's complement
+} 
+
+/// Message validator
+function validateMSG(message) {
+    let checksum = message[message.length - 1];
+    let removeCKS = message.slice(0, -1);
+    return calculateCKS(removeCKS) === checksum;
+} 
+    
+/// Converts decimal to signed 16-bit integral
+function signedINT(byte1, byte0) {
+    let combined = (byte1 << 8) | byte0;
+    if (combined >= 32768) {
+        combined -= 65536;
+    }
+    return combined;
+}
+
+/// Converts decimal to unsigned 16-bit integral
+function unsignedINT(byte1, byte0) {
+    let combined2 = (byte1 << 8) | byte0;
+    return combined2;
+} 
+
+/// Converts decimals to unsigned long integer
+function unsignedlongINT(byte3, byte2, byte1, byte0) {
+    let combined = (byte3 << 24) | (byte2 << 16) | (byte1 << 8) | byte0;
+    return combined;
+}
+
+/// Process PID values from a valid message
+function processPID(message, values) {
+    for (let i = 1; i < message.length - 1; i++) {
+        let pid = message[i];
+        switch (pid) {
+        
+            /// Single Character PIDs
+            case 84:
+                values[0] = message[i + 1] * 0.805;
+                i++;
+                break;
+
+            case 91:
+                values[1] = message[i + 1] * 0.4;
+                i++;
+                break;
+
+            case 92:
+                values[2] = message[i + 1] * 0.5;
+                i++;
+                break;
+
+            case 100:
+                values[3] = message[i + 1] * 3.45;
+                i++;
+                break;
+
+            case 102:
+                values[4] = message[i + 1] * 0.862;
+                i++;
+                break;
+
+            /// Two character PID
+            case 175:
+                let byte1_175 = message[i + 2];
+                let byte0_175 = message[i + 1];
+                let sint_175 = signedINT(byte1_175,byte0_175);        
+                values [5] = (((sint_175 * 0.25) - 32) * (5/9));
+                i += 2;
+                break;  
+                
+            case 183:
+                let byte1_183 = message[i + 2];
+                let byte0_183 = message[i + 1];
+                let usint_183 = unsignedINT(byte1_183,byte0_183);       
+                values [6] = usint_183 * 0.0591408;
+                i += 2;
+                break;
+                
+             case 184: 
+                let byte1_184 = message[i + 2];
+                let byte0_184 = message[i + 1];
+                let usint_184 = unsignedINT(byte1_184,byte0_184);        
+                values [7] = usint_184 * 0.00166072;
+                i += 2;
+                break;      
+                                                                                
+            case 190: 
+                let byte1_190 = message[i + 2];
+                let byte0_190 = message[i + 1];
+                let usint_190 = unsignedINT(byte1_190,byte0_190);        
+                values [8] = usint_190 * 0.25;
+                i += 2;
+                break;
+                
+            case 244:
+                let byte3_244 = message[i + 5];  
+                let byte2_244 = message[i + 4];
+                let byte1_244 = message[i + 3];
+                let byte0_244 = message[i + 2];
+                let ulongsint_244 = unsignedlongINT(byte3_244, byte2_244, byte1_244, byte0_244);
+                values [9] = ulongsint_244 * 0.16;
+                i += 6;
+                break;        
+                 
+                
+            default:
+                if (pid >= 128 && pid <= 191) {
+                    i += 2;
+                    break;
+                } else {
+                    i ++;
+                    break;
+                }
+        }
+    }
+}
+ 
+/// Frame parser
+function parse(frame) {
+    let data = [];
+    let values = storage;
+
+    /// Convert frame hex to decimal
+    for (let i = 0; i < frame.length; i += 2) {
+        let hex = frame.substring(i, i + 2);
+        let decimal = hex2dec(hex);
+        data.push(decimal);
+    }
+
+    /// Send data to buffering
+    buffering(data);
+    
+    /// Retrieve message
+    let message_1 = buffer2format(buffer, format_1);
+    let message_2 = buffer2format(buffer, format_2);
+    let message_3 = buffer2format(buffer, format_3);
+    let message_4 = buffer2format(buffer, format_4);
+    
+    /// Validate messages
+    let isValid_1 = false;
+    let isValid_2 = false;
+    let isValid_3 = false;
+    let isValid_4 = false;
+    
+    if (message_1 !== [0]) {
+        isValid_1 = validateMSG(message_1);
+    }
+
+    if (message_2 !== [0]) {
+        isValid_2 = validateMSG(message_2);
+    }   
+
+    if (message_3 !== [0]) {
+        isValid_3 = validateMSG(message_3);
+    }    
+    
+    if (message_4 !== [0]) {
+        isValid_4 = validateMSG(message_4);
+    }                                          
+
+    /// Get values if message is valid
+    if (isValid_1) {
+        processPID(message_1, values);
+    }
+
+    if (isValid_2) {
+        processPID(message_2, values);
+    }
+    
+    if (isValid_3) {
+        processPID(message_3, values);
+    }    
+   
+    if (isValid_4) {
+        processPID(message_4, values);
+    }
+    
+    /// Debug logging
+    ///console.log("Raw frame:", frame);
+    ///console.log("Buffer: ", buffer);
+    ///console.log("Message 1: ", message_1);
+    ///console.log("Message 2: ", message_2);
+    ///console.log("Message 3: ", message_3);    
+    storage = values;
+    return values;
+}
